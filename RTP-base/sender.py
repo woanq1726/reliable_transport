@@ -23,7 +23,6 @@ def sender(receiver_ip, receiver_port, window_size):
         hdr.checksum = compute_checksum(hdr / payload)
         return bytes(hdr / payload)
 
-    # Handshake: gửi START, chờ ACK(seq=1)
     s.settimeout(TIMEOUT)
     while True:
         s.sendto(make_pkt(0, 0), dest)
@@ -35,39 +34,33 @@ def sender(receiver_ip, receiver_port, window_size):
         except socket.timeout:
             pass
 
-    # Sliding window, DATA seq_num bắt đầu từ 1
     base = 1
     nxt = 1
     pkts = [make_pkt(2, i + 1, chunks[i]) for i in range(total)]
     timer = time.time()
 
     while base <= total:
-        # Gửi các gói mới trong cửa sổ
         while nxt <= min(base + window_size - 1, total):
             s.sendto(pkts[nxt - 1], dest)
             nxt += 1
 
-        # Tính thời gian còn lại trong timer
         remaining = TIMEOUT - (time.time() - timer)
         if remaining <= 0:
-            # Timeout: gửi lại toàn bộ cửa sổ
             for i in range(base, nxt):
                 s.sendto(pkts[i - 1], dest)
             timer = time.time()
             continue
 
-        # Chờ ACK
         try:
             s.settimeout(remaining)
             raw, _ = s.recvfrom(2048)
             hdr = PacketHeader(raw[:16])
             if hdr.type == 3 and hdr.seq_num > base:
-                base = hdr.seq_num  # cumulative ACK
-                timer = time.time()  # reset timer khi window tiến
+                base = hdr.seq_num
+                timer = time.time()
         except socket.timeout:
             pass
 
-    # Gửi END
     end_seq = total + 1
     end_pkt = make_pkt(1, end_seq)
     t = time.time()

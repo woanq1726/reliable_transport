@@ -26,14 +26,12 @@ def receiver(receiver_ip, receiver_port, window_size):
         hdr = PacketHeader(raw[:16])
         payload = raw[16:16 + hdr.length]
 
-        # Kiểm tra checksum, bỏ gói nếu sai
         saved = hdr.checksum
         hdr.checksum = 0
         if compute_checksum(hdr / payload) != saved:
             continue
         hdr.checksum = saved
 
-        # START
         if hdr.type == 0:
             if not connected:
                 connected = True
@@ -47,31 +45,22 @@ def receiver(receiver_ip, receiver_port, window_size):
         if not connected or addr != sender_addr:
             continue
 
-        # END
         if hdr.type == 1:
             sys.stdout.buffer.write(b''.join(result))
             sys.stdout.buffer.flush()
             s.sendto(make_ack(hdr.seq_num), addr)
             break
 
-        # DATA
         if hdr.type == 2:
             seq = hdr.seq_num
-
-            # Bỏ gói nằm ngoài cửa sổ
             if seq < next_seq or seq >= next_seq + window_size:
                 s.sendto(make_ack(next_seq), addr)
                 continue
-
             if seq not in buf:
                 buf[seq] = payload
-
-            # Trượt cửa sổ
             while next_seq in buf:
                 result.append(buf.pop(next_seq))
                 next_seq += 1
-
-            # Cumulative ACK: seq_num = số tiếp theo đang chờ
             s.sendto(make_ack(next_seq), addr)
 
     s.close()

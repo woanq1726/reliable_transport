@@ -23,7 +23,6 @@ def sender(receiver_ip, receiver_port, window_size):
         hdr.checksum = compute_checksum(hdr / payload)
         return bytes(hdr / payload)
 
-    # Handshake: gửi START, chờ ACK(seq=1)
     s.settimeout(TIMEOUT)
     while True:
         s.sendto(make_pkt(0, 0), dest)
@@ -35,15 +34,13 @@ def sender(receiver_ip, receiver_port, window_size):
         except socket.timeout:
             pass
 
-    # Sliding window, Selective Repeat
     base = 1
     nxt = 1
     pkts = [make_pkt(2, i + 1, chunks[i]) for i in range(total)]
-    acked = set()   # lưu seq_num của từng gói đã được ACK riêng lẻ
+    acked = set()
     timer = time.time()
 
     while base <= total:
-        # Tiến base qua các gói đã được ACK liên tiếp
         while base <= total and base in acked:
             acked.discard(base)
             base += 1
@@ -51,22 +48,18 @@ def sender(receiver_ip, receiver_port, window_size):
         if base > total:
             break
 
-        # Gửi các gói mới trong cửa sổ
         while nxt <= min(base + window_size - 1, total):
             s.sendto(pkts[nxt - 1], dest)
             nxt += 1
 
-        # Tính thời gian còn lại
         remaining = TIMEOUT - (time.time() - timer)
         if remaining <= 0:
-            # Timeout: chỉ gửi lại các gói CHƯA được ACK
             for i in range(base, nxt):
                 if i not in acked:
                     s.sendto(pkts[i - 1], dest)
             timer = time.time()
             continue
 
-        # Chờ individual ACK
         try:
             s.settimeout(remaining)
             raw, _ = s.recvfrom(2048)
@@ -75,11 +68,10 @@ def sender(receiver_ip, receiver_port, window_size):
                 seq = hdr.seq_num
                 if base <= seq <= base + window_size - 1 and seq not in acked:
                     acked.add(seq)
-                    timer = time.time()  # reset timer khi nhận ACK mới
+                    timer = time.time()
         except socket.timeout:
             pass
 
-    # Gửi END
     end_seq = total + 1
     end_pkt = make_pkt(1, end_seq)
     t = time.time()
