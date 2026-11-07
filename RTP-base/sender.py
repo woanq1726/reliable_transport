@@ -23,13 +23,27 @@ def sender(receiver_ip, receiver_port, window_size):
         hdr.checksum = compute_checksum(hdr / payload)
         return bytes(hdr / payload)
 
+    def parse_packet(raw):
+        if len(raw) < 16:
+            return None, None
+        hdr = PacketHeader(raw[:16])
+        if len(raw) != 16 + hdr.length:
+            return None, None
+        payload = raw[16:16 + hdr.length]
+        saved = hdr.checksum
+        hdr.checksum = 0
+        if compute_checksum(hdr / payload) != saved:
+            return None, None
+        hdr.checksum = saved
+        return hdr, payload
+
     s.settimeout(TIMEOUT)
     while True:
         s.sendto(make_pkt(0, 0), dest)
         try:
             raw, _ = s.recvfrom(2048)
-            hdr = PacketHeader(raw[:16])
-            if hdr.type == 3 and hdr.seq_num == 1:
+            hdr, _ = parse_packet(raw)
+            if hdr is not None and hdr.type == 3 and hdr.seq_num == 1:
                 break
         except socket.timeout:
             pass
@@ -54,8 +68,8 @@ def sender(receiver_ip, receiver_port, window_size):
         try:
             s.settimeout(remaining)
             raw, _ = s.recvfrom(2048)
-            hdr = PacketHeader(raw[:16])
-            if hdr.type == 3 and hdr.seq_num > base:
+            hdr, _ = parse_packet(raw)
+            if hdr is not None and hdr.type == 3 and base < hdr.seq_num <= total + 1:
                 base = hdr.seq_num
                 timer = time.time()
         except socket.timeout:
@@ -64,18 +78,23 @@ def sender(receiver_ip, receiver_port, window_size):
     end_seq = total + 1
     end_pkt = make_pkt(1, end_seq)
     t = time.time()
-    while True:
-        s.sendto(end_pkt, dest)
+    last_sent = 0
+    while time.time() - t < TIMEOUT:
+        now = time.time()
+        if now - last_sent >= 0.1:
+            s.sendto(end_pkt, dest)
+            last_sent = now
+        remaining = min(0.1, TIMEOUT - (now - t))
+        if remaining <= 0:
+            break
         try:
-            s.settimeout(0.1)
+            s.settimeout(remaining)
             raw, _ = s.recvfrom(2048)
-            hdr = PacketHeader(raw[:16])
-            if hdr.type == 3 and hdr.seq_num == end_seq:
+            hdr, _ = parse_packet(raw)
+            if hdr is not None and hdr.type == 3 and hdr.seq_num == end_seq:
                 break
         except socket.timeout:
             pass
-        if time.time() - t >= TIMEOUT:
-            break
 
     s.close()
 

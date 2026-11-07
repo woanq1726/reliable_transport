@@ -15,22 +15,30 @@ def receiver(receiver_ip, receiver_port, window_size):
         hdr.checksum = compute_checksum(hdr)
         return bytes(hdr)
 
+    def parse_packet(raw):
+        if len(raw) < 16:
+            return None, None
+        hdr = PacketHeader(raw[:16])
+        if len(raw) != 16 + hdr.length:
+            return None, None
+        payload = raw[16:16 + hdr.length]
+        saved = hdr.checksum
+        hdr.checksum = 0
+        if compute_checksum(hdr / payload) != saved:
+            return None, None
+        hdr.checksum = saved
+        return hdr, payload
+
     connected = False
     sender_addr = None
     next_seq = 1
     buf = {}
-    result = []
 
     while True:
         raw, addr = s.recvfrom(2048)
-        hdr = PacketHeader(raw[:16])
-        payload = raw[16:16 + hdr.length]
-
-        saved = hdr.checksum
-        hdr.checksum = 0
-        if compute_checksum(hdr / payload) != saved:
+        hdr, payload = parse_packet(raw)
+        if hdr is None:
             continue
-        hdr.checksum = saved
 
         if hdr.type == 0:
             if not connected:
@@ -38,7 +46,8 @@ def receiver(receiver_ip, receiver_port, window_size):
                 sender_addr = addr
                 next_seq = 1
                 buf = {}
-                result = []
+                s.sendto(make_ack(1), addr)
+            elif addr == sender_addr and next_seq == 1 and not buf:
                 s.sendto(make_ack(1), addr)
             continue
 
@@ -46,19 +55,21 @@ def receiver(receiver_ip, receiver_port, window_size):
             continue
 
         if hdr.type == 1:
-            sys.stdout.buffer.write(b''.join(result))
-            sys.stdout.buffer.flush()
             s.sendto(make_ack(hdr.seq_num), addr)
             break
 
         if hdr.type == 2:
             seq = hdr.seq_num
-            if seq < next_seq or seq >= next_seq + window_size:
+            if seq < next_seq:
+                s.sendto(make_ack(seq), addr)
+                continue
+            if seq >= next_seq + window_size:
                 continue
             if seq not in buf:
                 buf[seq] = payload
             while next_seq in buf:
-                result.append(buf.pop(next_seq))
+                sys.stdout.buffer.write(buf.pop(next_seq))
+                sys.stdout.buffer.flush()
                 next_seq += 1
             s.sendto(make_ack(seq), addr)
 
